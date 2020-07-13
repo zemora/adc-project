@@ -1,4 +1,5 @@
 from PyQt5.QtCore import QSemaphore, QMutex
+from PyQt5.QtCore import QMutexLocker, QWaitCondition
 from queue import Queue
 
 
@@ -84,3 +85,77 @@ class Buffer(object):
 
     def isempty(self):
         return self.queue.qsize() == 0
+
+
+class MultiBufferManager(object):
+
+    """
+    Class for synchronizing capture threads from different cameras.
+    """
+
+    def __init__(self, do_sync=True):
+        self.sync_devices = set()
+        self.do_sync = do_sync
+        self.wc = QWaitCondition()
+        self.mutex = QMutex()
+        self.arrived = 0
+        self.buffer_maps = dict()
+
+    def bind_thread(self, thread, buffer_size, sync=True):
+        self.create_buffer_for_device(thread.device_id, buffer_size, sync)
+        thread.buffer_manager = self
+
+    def create_buffer_for_device(self, device_id, buffer_size, sync=True):
+        if sync:
+            with QMutexLocker(self.mutex):
+                self.sync_devices.add(device_id)
+
+        self.buffer_maps[device_id] = Buffer(buffer_size)
+
+    def get_device(self, device_id):
+        return self.buffer_maps[device_id]
+
+    def remove_device(self, device_id):
+        self.buffer_maps.pop(device_id)
+        with QMutexLocker(self.mutex):
+            if device_id in self.sync_devices:
+                self.sync_devices.remove(device_id)
+                self.wc.wakeAll()
+
+    def sync(self, device_id):
+        # only perform sync if enabled for specified device/stream
+        self.mutex.lock()
+        if device_id in self.sync_devices:
+            # increment arrived count
+            self.arrived += 1
+            # we are the last to arrive: wake all waiting threads
+            if self.do_sync and self.arrived == len(self.sync_devices):
+                self.wc.wakeAll()
+            # still waiting for other streams to arrive: wait
+            else:
+                self.wc.wait(self.mutex)
+            # decrement arrived count
+            self.arrived -= 1
+        self.mutex.unlock()
+
+    def wake_all(self):
+        with QMutexLocker(self.mutex):
+            self.wc.wakeAll()
+
+    def set_sync(self, enable):
+        self.do_sync = enable
+
+    def sync_enabled(self):
+        return self.do_sync
+
+    def sync_enabled_for_device(self, device_id):
+        return device_id in self.sync_devices
+
+    def __contains__(self, device_id):
+        return device_id in self.buffer_maps
+
+    def __str__(self):
+        return (self.__class__.__name__ + ":\n" + \
+                "sync: {}\n".format(self.do_sync) + \
+                "devices: {}\n".format(tuple(self.buffer_maps.keys())) + \
+                "sync enabled devices: {}".format(self.sync_devices))
