@@ -9,7 +9,7 @@ class BaseThread(QThread):
 
     """
     Base class for all types of threads (capture, processing, stitching, ...,
-    etc). Mainly for collecting statistics of threads.
+    etc). Mainly for collecting statistics of the threads.
     """
 
     FPS_STAT_QUEUE_LENGTH = 32
@@ -50,6 +50,3 @@ class BaseThread(QThread):
 
             self.stat_data.average_fps = round(self.fps_sum / self.FPS_STAT_QUEUE_LENGTH, 2)
             self.fps_sum = 0
-
-    def run(self):
-        raise NotImplementedError
